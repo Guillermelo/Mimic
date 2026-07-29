@@ -36,7 +36,7 @@ export PRODUCTION_MONGO_URI="mongodb://localhost:27019/mimic_target"
 Use:
 
 ```bash
-examples/mongo-promote.yml
+examples/mimic.yml
 ```
 
 The seeded source and target databases intentionally differ:

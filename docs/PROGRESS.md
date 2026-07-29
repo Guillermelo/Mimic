@@ -144,7 +144,7 @@ backups/run/target
 - Unique index duplicate checks before index creation still need dedicated implementation.
 - There are no integration tests against disposable MongoDB containers yet.
 - Unit tests exist only for a small part of config validation.
-- Docs and examples still need a final pass to remove old `mongo-promote` naming.
+- Real write behavior is still intentionally blocked, but project naming is now aligned around `mimic`.
 
 ## Verification
 
@@ -164,10 +164,8 @@ Packages without tests compiled successfully. Existing config tests passed.
 
 ## Recommended Next Work
 
-1. Rename the example config from `examples/mongo-promote.yml` to `examples/mimic.yml`.
-2. Update `docs/ARCHITECTURE.md` and `docs/TESTING.md` to use `mimic` naming.
-3. Add focused tests for config file extension validation, index validation, array normalization, diff generation, plan approval, and checksum validation.
-4. Implement `export-script --format=mongodb-js`.
-5. Implement real backup through `mongodump` for local MongoDB.
-6. Implement transaction-backed apply for `insertOne` and `updateOne`.
-7. Add integration tests using the local Docker MongoDB setup.
+1. Add focused tests for config file extension validation, index validation, array normalization, diff generation, plan approval, and checksum validation.
+2. Implement `export-script --format=mongodb-js`.
+3. Implement real backup through `mongodump` for local MongoDB.
+4. Implement transaction-backed apply for `insertOne` and `updateOne`.
+5. Add integration tests using the local Docker MongoDB setup.
