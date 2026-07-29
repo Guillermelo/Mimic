@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 )
@@ -53,6 +54,39 @@ func Validate(cfg Config) error {
 				return fmt.Errorf("collection %q array %q must define key for mergeByKey", name, field)
 			}
 		}
+		for field, ref := range rule.References {
+			if strings.TrimSpace(field) == "" {
+				return fmt.Errorf("collection %q has an empty reference field", name)
+			}
+			if strings.TrimSpace(ref.Collection) == "" {
+				return fmt.Errorf("collection %q reference %q must define collection", name, field)
+			}
+			if len(ref.Key) == 0 {
+				return fmt.Errorf("collection %q reference %q must define key", name, field)
+			}
+		}
+	}
+
+	for collection, indexes := range cfg.Indexes {
+		if _, ok := cfg.Collections[collection]; !ok {
+			return fmt.Errorf("indexes configured for non-allowed collection %q", collection)
+		}
+		for i, index := range indexes {
+			if len(index.Keys) == 0 {
+				return fmt.Errorf("index %d for collection %q must define keys", i, collection)
+			}
+			for field, direction := range index.Keys {
+				if strings.TrimSpace(field) == "" {
+					return fmt.Errorf("index %d for collection %q has an empty key", i, collection)
+				}
+				if direction != 1 && direction != -1 {
+					return fmt.Errorf("index %d for collection %q key %q must be 1 or -1", i, collection, field)
+				}
+			}
+			if strings.TrimSpace(index.Options.Name) == "" {
+				return fmt.Errorf("index %d for collection %q must define options.name", i, collection)
+			}
+		}
 	}
 
 	return nil
@@ -69,13 +103,44 @@ func Resolve(cfg Config) (ResolvedConfig, error) {
 		return ResolvedConfig{}, fmt.Errorf("environment variable %s is required", cfg.Target.URIEnv)
 	}
 
-	if sourceURI == targetURI {
-		return ResolvedConfig{}, errors.New("source and target MongoDB URIs must be different")
+	sourceDB, err := databaseName(sourceURI)
+	if err != nil {
+		return ResolvedConfig{}, fmt.Errorf("source database name: %w", err)
+	}
+	targetDB, err := databaseName(targetURI)
+	if err != nil {
+		return ResolvedConfig{}, fmt.Errorf("target database name: %w", err)
+	}
+
+	if sourceURI == targetURI || sourceDB == targetDB && strings.TrimSpace(sourceURI) == strings.TrimSpace(targetURI) {
+		return ResolvedConfig{}, errors.New("source and target MongoDB connections must be different")
 	}
 
 	return ResolvedConfig{
 		Config: cfg,
-		Source: ResolvedEndpoint{URI: sourceURI},
-		Target: ResolvedEndpoint{URI: targetURI},
+		Source: ResolvedEndpoint{URI: sourceURI, Database: sourceDB, Label: endpointLabel(cfg.Source.Label, sourceDB)},
+		Target: ResolvedEndpoint{URI: targetURI, Database: targetDB, Label: endpointLabel(cfg.Target.Label, targetDB)},
 	}, nil
+}
+
+func endpointLabel(label string, database string) string {
+	if strings.TrimSpace(label) != "" {
+		return strings.TrimSpace(label)
+	}
+	return database
+}
+
+func databaseName(uri string) (string, error) {
+	parsed, err := url.Parse(uri)
+	if err != nil {
+		return "", err
+	}
+	name := strings.Trim(parsed.Path, "/")
+	if name == "" {
+		return "", fmt.Errorf("URI must include a database name")
+	}
+	if strings.Contains(name, "/") {
+		return "", fmt.Errorf("URI must include exactly one database name")
+	}
+	return name, nil
 }

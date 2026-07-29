@@ -7,6 +7,9 @@ import (
 )
 
 func ValidatePlan(p plan.Plan) error {
+	if p.Kind != "" && p.Kind != "mimic.plan" {
+		return errors.New("plan kind is invalid")
+	}
 	if p.Target == "" {
 		return errors.New("plan target is required")
 	}

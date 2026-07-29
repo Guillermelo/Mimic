@@ -12,6 +12,7 @@ type Config struct {
 
 type Endpoint struct {
 	URIEnv string `yaml:"uriEnv"`
+	Label  string `yaml:"label"`
 }
 
 type Defaults struct {
@@ -57,7 +58,9 @@ type ResolvedConfig struct {
 }
 
 type ResolvedEndpoint struct {
-	URI string
+	URI      string
+	Database string
+	Label    string
 }
 
 func (c Config) CollectionNames() []string {

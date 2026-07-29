@@ -25,7 +25,13 @@ func runValidate(ctx context.Context, args []string, stdout io.Writer) error {
 		return err
 	}
 
-	if err := mimicmongo.ValidateConnections(ctx, resolved.Source.URI, resolved.Target.URI, cfg.CollectionNames()); err != nil {
+	collections := make(map[string]mimicmongo.CollectionRule, len(cfg.Collections))
+	for name, rule := range cfg.Collections {
+		collections[name] = mimicmongo.CollectionRule{Key: rule.Key}
+	}
+	source := mimicmongo.Endpoint{URI: resolved.Source.URI, Database: resolved.Source.Database}
+	target := mimicmongo.Endpoint{URI: resolved.Target.URI, Database: resolved.Target.Database}
+	if err := mimicmongo.ValidateConnections(ctx, source, target, collections); err != nil {
 		return err
 	}
 

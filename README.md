@@ -1,22 +1,16 @@
-# Mongo Promote Tool
+# Mimic
 
-## Project docs
+## Overview
 
-- [Working rules](AGENTS.md): mandatory coding, safety, and testing rules to review before changing code.
-- [Architecture](docs/ARCHITECTURE.md): proposed Go package boundaries and first milestone.
-- [Testing environment](docs/TESTING.md): local MongoDB setup for disposable integration tests.
+Mimic is a review-first Go CLI that compares two MongoDB databases, shows the exact changes it would make, and applies only the operations explicitly approved by the operator.
 
-## Idea
-
-Esta herramienta compara dos bases de datos MongoDB y genera un plan controlado para llevar datos configurables desde una base origen hacia una base destino.
-
-El caso principal es:
+The main use case is:
 
 ```txt
 staging -> production
 ```
 
-Pero la herramienta debe ser generica para poder usarse con cualquier par de bases MongoDB:
+The tool must also work with any pair of MongoDB databases:
 
 ```txt
 dev -> staging
@@ -25,29 +19,15 @@ backup -> production
 client-a -> client-b
 ```
 
-La herramienta no debe asumir que toda la base origen es la verdad. MongoDB no distingue por si solo entre datos de configuracion, datos de prueba y datos reales de negocio. Por eso el comportamiento debe estar controlado por un archivo de reglas.
+The tool must not assume that the entire source database is the desired truth. MongoDB does not know which documents are configuration, test data, production data, or temporary state. For that reason, every comparison, approval, and write must be controlled by an explicit YAML configuration file and an approved plan.
 
-## Lenguaje elegido
+The tool will be developed in **Go**.
 
-La herramienta se va a desarrollar en **Go**.
+## Problem
 
-Motivos:
+Teams often make configuration changes in staging and later need to apply those changes to production without overwriting real production data.
 
-- Permite distribuir un binario unico por sistema operativo.
-- No obliga a instalar Node.js, Python ni dependencias del proyecto donde se use.
-- Es una buena opcion para CLIs operativas.
-- Tiene driver oficial de MongoDB mantenido por MongoDB.
-- Maneja concurrencia de forma simple si mas adelante se quieren comparar collections en paralelo.
-- Permite tipar estructuras internas como config, plan, operaciones y auditoria sin depender del stack de la aplicacion que consume la herramienta.
-- Es adecuado para una herramienta reutilizable entre distintos proyectos y equipos.
-
-La herramienta debe ser independiente del backend actual. Aunque este repositorio use Node.js, esta CLI no debe depender de ese runtime.
-
-## Que problema resuelve
-
-Resuelve la promocion controlada de datos entre dos MongoDB sin pisar datos productivos.
-
-Ejemplos de datos que normalmente si se pueden promover:
+Examples of data that may usually be promoted:
 
 ```txt
 settings
@@ -61,10 +41,10 @@ paymentGateways
 billingPlans
 subscriptionPlans
 contentPages
-categories base
+base categories
 ```
 
-Ejemplos de datos que normalmente no se deben promover:
+Examples of data that should usually not be promoted:
 
 ```txt
 users
@@ -81,57 +61,74 @@ sessions
 tokens
 ```
 
-## Que no debe intentar resolver
+## Non-Goal
 
-La herramienta no debe ser un boton de:
+This tool must not be a button for:
 
 ```txt
-hacer production igual a staging
+make production equal to staging
 ```
 
-Eso es peligroso porque staging suele tener datos de prueba, datos incompletos, IDs distintos y cambios experimentales.
+That would be dangerous because staging can contain test data, incomplete documents, different IDs, temporary changes, and experimental records.
 
-La herramienta debe trabajar con:
+The tool must only operate with:
 
-- collections permitidas explicitamente;
-- claves estables por collection;
-- campos ignorados;
-- reglas de arrays;
-- validaciones antes de aplicar;
-- modo dry-run por defecto;
-- confirmacion explicita para cambios reales.
+- explicitly allowed collections;
+- stable keys per collection;
+- ignored fields;
+- array comparison rules;
+- pre-apply validations;
+- human review before apply;
+- an approved immutable plan before apply;
+- backups before writing;
+- dry-run by default;
+- explicit confirmation for real writes.
 
-## Conceptos clave
+## Core Concepts
 
 ### Source
 
-Base de datos origen. Normalmente staging.
+The database that contains the desired configurable changes. Usually staging.
 
 ### Target
 
-Base de datos destino. Normalmente production.
+The database that will receive the approved changes. Usually production.
+
+### Backup
+
+A backup or snapshot taken before any write operation.
+
+Both source and target must be backed up before applying a plan. The target backup is required for recovery. The source backup is required for auditability and reproducibility of the exact data that was promoted.
 
 ### Plan
 
-Archivo generado por la herramienta que contiene las operaciones necesarias para actualizar el target.
+A generated JSON file containing proposed operations.
 
-Ejemplos:
+A raw plan is not enough to modify the target. The operator must review and approve the plan first.
+
+Examples:
 
 ```txt
 insert document
 update document
 create index
-drop index, solo si esta explicitamente permitido
-delete document, solo si esta explicitamente permitido
+drop index, only when explicitly allowed
+delete document, only when explicitly allowed
 ```
 
-### Stable key
+### Approved Plan
 
-Clave logica usada para identificar el mismo documento en ambas bases.
+An approved copy of a plan that contains only the operations accepted by the operator.
 
-No se recomienda usar `_id` por defecto, porque el mismo concepto puede tener IDs distintos entre ambientes.
+`apply` must only execute an approved plan. It must not apply a raw plan directly, and it must not recalculate the diff during apply.
 
-Ejemplos:
+### Stable Key
+
+A logical key used to identify the same document in both databases.
+
+The tool must not use `_id` by default because the same business concept can have different ObjectIds across environments.
+
+Examples:
 
 ```txt
 settings.key
@@ -142,15 +139,26 @@ documentTemplates.slug
 paymentGateways.provider
 ```
 
-Tambien puede ser una clave compuesta:
+A stable key can also be composite:
 
 ```txt
 country + city + serviceType
 ```
 
-## Archivo de configuracion
+## YAML Configuration File
 
-Ejemplo de `mongo-promote.yml`:
+Mimic configuration must be written in YAML.
+
+Supported config extensions:
+
+```txt
+.yml
+.yaml
+```
+
+JSON config files are not supported. JSON is reserved for generated machine artifacts such as plans, approved plans, and audit records.
+
+Example `mimic.yml`:
 
 ```yaml
 source:
@@ -212,31 +220,34 @@ indexes:
         name: slug_unique
 ```
 
-## Comandos esperados
+## Expected Commands
 
-### Validar configuracion
-
-```bash
-mongo-promote validate --config=mongo-promote.yml
-```
-
-Debe revisar:
-
-- que existan las variables de entorno;
-- que se pueda conectar a ambas bases;
-- que las collections configuradas existan o puedan crearse;
-- que cada collection tenga una clave estable;
-- que no haya reglas ambiguas.
-
-### Generar diff
+### Validate Configuration
 
 ```bash
-mongo-promote diff --config=mongo-promote.yml
+mimic validate --config=mimic.yml
 ```
 
-Debe mostrar diferencias sin tocar la base destino.
+This command must verify:
 
-Ejemplo:
+- the config file extension is `.yml` or `.yaml`;
+- the required environment variables exist;
+- the tool can connect to both databases;
+- configured collections exist or can be created;
+- every configured collection has a stable key;
+- no rule is ambiguous;
+- source and target do not point to the same database;
+- unique stable keys do not produce duplicates in either database.
+
+### Generate Diff
+
+```bash
+mimic diff --config=mimic.yml
+```
+
+This command must show differences without touching the target database.
+
+Example output:
 
 ```txt
 settings
@@ -251,13 +262,15 @@ indexes
   + createIndex settings.key_unique
 ```
 
-### Generar plan
+### Generate Plan
 
 ```bash
-mongo-promote plan --config=mongo-promote.yml --out=plans/2026-07-29-staging-to-prod.json
+mimic plan --config=mimic.yml --out=plans/2026-07-29-staging-to-prod.json
 ```
 
-Debe crear un archivo JSON con operaciones concretas, por ejemplo:
+This command must create a JSON file with proposed operations.
+
+Example:
 
 ```json
 {
@@ -284,104 +297,309 @@ Debe crear un archivo JSON con operaciones concretas, por ejemplo:
 }
 ```
 
-### Aplicar plan
+### Review Plan
 
 ```bash
-mongo-promote apply --plan=plans/2026-07-29-staging-to-prod.json --confirm=production
+mimic review --plan=plans/2026-07-29-staging-to-prod.json
 ```
 
-Debe aplicar solamente las operaciones presentes en el plan.
+This command must show the proposed operations in a human-readable format before anything is applied.
 
-Por seguridad, `apply` no deberia recalcular el diff en ese momento. Primero se genera el plan, se revisa, y despues se aplica ese plan exacto.
-
-### Exportar migracion
-
-```bash
-mongo-promote export-script --plan=plans/2026-07-29-staging-to-prod.json --format=mongodb-js
-```
-
-Debe generar un script revisable para guardar en Git cuando haga falta.
-
-Como la herramienta estara hecha en Go, la ejecucion principal no depende de `migrate-mongo`. Aun asi, podria soportar exportar scripts compatibles con otros flujos si un proyecto especifico los necesita.
-
-## Flujo recomendado
+Example output:
 
 ```txt
-1. Se hacen cambios en staging.
-2. Se ejecuta diff contra production.
-3. Se revisan diferencias.
-4. Se genera un plan.
-5. Se hace backup o snapshot de production.
-6. Se aplica el plan en production con confirmacion explicita.
-7. Se guarda el plan aplicado como evidencia.
-8. Opcionalmente se exporta como migracion versionada.
+Target: production
+Source: staging
+
+Collections:
+  settings
+    1 insert
+    1 update
+    0 deletes
+
+  roles
+    1 insert
+    0 updates
+    0 deletes
+
+Indexes:
+  settings
+    1 createIndex
+
+Risk checks:
+  deletes: disabled
+  unique indexes: validated
+  backup required: yes
+
+No changes have been applied.
 ```
 
-## Restricciones importantes
-
-### Dry-run por defecto
-
-Ningun comando debe modificar datos salvo que se pase una bandera explicita:
+### Approve Plan
 
 ```bash
---apply
+mimic approve \
+  --plan=plans/2026-07-29-staging-to-prod.json \
+  --out=plans/2026-07-29-staging-to-prod.approved.json
+```
+
+This command creates an approved plan artifact.
+
+The approval step should support removing operations from the plan before approval. For example, an operator may approve updates in `settings` but skip a proposed index change.
+
+The approved plan must include:
+
+```txt
+original plan checksum
+YAML config checksum
+approved plan checksum
+approved operations
+skipped operations
+approval timestamp
+operator identity, when available
+```
+
+### Backup Databases
+
+```bash
+mimic backup \
+  --config=mimic.yml \
+  --plan=plans/2026-07-29-staging-to-prod.approved.json \
+  --out=backups/2026-07-29-staging-to-prod
+```
+
+This command must create backups for both databases before any write is applied.
+
+Required backup artifacts:
+
+```txt
+backups/2026-07-29-staging-to-prod/source
+backups/2026-07-29-staging-to-prod/target
+backups/2026-07-29-staging-to-prod/metadata.json
+```
+
+The metadata file should include:
+
+```txt
+source connection label
+target connection label
+database names
+included collections
+backup timestamp
+tool version
+config checksum
+approved plan checksum
+```
+
+The backup command should use MongoDB-native backup mechanisms where possible, such as `mongodump` for self-managed MongoDB or Atlas snapshots when running in Atlas-backed environments.
+
+### Apply Plan
+
+```bash
+mimic apply \
+  --plan=plans/2026-07-29-staging-to-prod.approved.json \
+  --backup=backups/2026-07-29-staging-to-prod \
+  --confirm=production
+```
+
+This command must apply only the operations already present in the approved plan.
+
+For safety, `apply` must only accept an approved plan and must not recalculate the diff. The sequence is:
+
+```txt
+generate diff
+generate plan
+review plan
+approve plan
+backup source and target
+apply that exact approved plan
+```
+
+### Export Script
+
+```bash
+mimic export-script --plan=plans/2026-07-29-staging-to-prod.approved.json --format=mongodb-js
+```
+
+This command should generate a reviewable script from an approved plan that can be stored in Git when a project wants a versioned artifact outside the Go CLI.
+
+## Recommended Workflow
+
+The intended workflow is:
+
+```txt
+1. Make and test configuration changes in staging.
+2. Run validate against source and target.
+3. Run diff from source to target.
+4. Generate a proposed plan file.
+5. Review the plan manually.
+6. Approve only the operations that should be applied.
+7. Create backups of both source and target using the approved plan checksum.
+8. Validate that the backup artifacts exist and match the YAML config and approved plan checksums.
+9. Apply the exact approved plan to target with explicit confirmation.
+10. Verify counts, indexes, and critical application behavior.
+11. Store the original plan, approved plan, backup metadata, and audit log.
+12. Optionally export a script or migration artifact for Git.
+```
+
+In production, the minimum safe command sequence should be:
+
+```bash
+mimic validate --config=mimic.yml
+mimic diff --config=mimic.yml
+mimic plan --config=mimic.yml --out=plans/2026-07-29-staging-to-prod.json
+mimic review --plan=plans/2026-07-29-staging-to-prod.json
+mimic approve --plan=plans/2026-07-29-staging-to-prod.json --out=plans/2026-07-29-staging-to-prod.approved.json
+mimic backup --config=mimic.yml --plan=plans/2026-07-29-staging-to-prod.approved.json --out=backups/2026-07-29-staging-to-prod
+mimic apply --plan=plans/2026-07-29-staging-to-prod.approved.json --backup=backups/2026-07-29-staging-to-prod --confirm=production
+```
+
+## Failure Handling Requirement
+
+If an apply operation fails, Mimic must prevent partial target changes for every operation class it supports.
+
+The tool must enforce this with multiple layers:
+
+- use MongoDB transactions for data writes when the target deployment supports them;
+- group compatible writes into transactional batches;
+- avoid mixing non-transactional operations with transactional document updates in the same apply batch;
+- run preflight validations before writing;
+- require a target backup before apply;
+- verify the target backup before apply;
+- record every attempted operation and its result in an audit log;
+- refuse to apply any approved plan that contains operations without a safe rollback or restore strategy.
+
+For normal document writes, the preferred strategy is:
+
+```txt
+transaction starts
+approved insert/update/delete operations run
+transaction commits only if every operation succeeds
+transaction aborts if any operation fails
+```
+
+For non-transactional or deployment-dependent operations, such as some index or collection changes, Mimic must either:
+
+- run them in a separate apply phase with explicit approval;
+- require a maintenance window or write pause;
+- require a tested restore command from the target backup;
+- or refuse to apply them.
+
+Important limitation:
+
+```txt
+Restoring a full target backup can also remove writes made by the live application after the backup was created.
+```
+
+Because of that, full backup restore is only safe when the target is in a controlled maintenance window, or when the operator explicitly accepts that recovery model.
+
+Mimic must fail closed. If it cannot keep the target unchanged after a failure, or cannot restore it safely under the current conditions, it must not start the apply.
+
+## Interactive Confirmation
+
+Before applying an approved plan, Mimic must show a final summary and require textual confirmation.
+
+Example:
+
+```txt
+Target: production
+Source: staging
+Approved plan: plans/2026-07-29-staging-to-prod.approved.json
+Backup: backups/2026-07-29-staging-to-prod
+
+Operations:
+  inserts: 2
+  updates: 5
+  deletes: 0
+  indexes: 1
+
+Safety:
+  approved plan checksum: valid
+  backup checksum: valid
+  deletes: disabled
+  rollback strategy: transaction for document writes
+  non-transactional operations: index phase requires explicit confirmation
+
+Type "apply production" to continue:
+```
+
+The command must abort unless the confirmation text matches exactly.
+
+`apply` must never prompt with a weak yes/no confirmation for production writes.
+
+## Important Restrictions
+
+### Dry-Run by Default
+
+No command should modify data unless `apply` is used with an approved plan, a verified backup, and explicit confirmation:
+
+```bash
 --confirm=production
 ```
 
-### Allowlist obligatoria
+### Approved Plan Required
 
-La herramienta no debe comparar todas las collections por defecto.
+`apply` must refuse raw plans.
 
-Solo debe operar sobre collections definidas en el archivo de configuracion.
+The only valid input for `apply` is an approved plan generated by `mimic approve`.
 
-### Deletes desactivados por defecto
+The approved plan must be immutable during apply. Mimic should verify its checksum before writing.
 
-Si un documento existe en target pero no existe en source, la herramienta puede reportarlo, pero no debe borrarlo salvo que la config lo permita:
+### Mandatory Allowlist
+
+The tool must not compare or modify every collection by default.
+
+It may only operate on collections defined in the YAML configuration file.
+
+### Deletes Disabled by Default
+
+If a document exists in target but not in source, the tool may report it, but it must not delete it unless the config allows deletes.
+
+Example:
 
 ```yaml
 allowDeletes: true
 ```
 
-Incluso con deletes habilitados, deberia poder configurarse por collection.
+Deletes should also be configurable per collection.
 
-### No usar `_id` por defecto
+### Do Not Use `_id` by Default
 
-`_id` debe ignorarse por defecto.
+`_id` must be ignored by default.
 
-Solo se debe usar `_id` como clave si la config lo declara explicitamente.
+It may only be used as a stable key if explicitly configured.
 
-### Indexes unicos requieren validacion previa
+### Unique Indexes Require Pre-Validation
 
-Antes de crear un index `unique`, la herramienta debe validar duplicados en target.
+Before creating a unique index, the tool must check for duplicates in the target database.
 
-Si hay duplicados, debe fallar antes de aplicar.
+If duplicates exist, the plan must fail before any write is applied.
 
-### Referencias entre collections
+### References Between Collections
 
-MongoDB no valida relaciones como una base SQL. Si un documento tiene referencias a otra collection, la herramienta debe poder:
+MongoDB does not enforce relationships like a SQL database. If a document references another collection, the tool must support rules to:
 
-- mantener el valor tal cual;
-- mapear por clave estable;
-- avisar si la referencia no existe en target;
-- bloquear la operacion si la referencia es requerida.
+- keep the reference as-is;
+- map the reference by a stable key;
+- warn if the referenced document does not exist in target;
+- block the operation if the reference is required.
 
-### Arrays necesitan estrategia
+### Arrays Need Explicit Strategy
 
-No todos los arrays se comparan igual.
+Not all arrays should be compared the same way.
 
-Estrategias posibles:
+Possible strategies:
 
 ```txt
-preserveOrder: el orden importa
-sort: se ordena antes de comparar
-set: se compara como conjunto sin duplicados
-replace: se reemplaza el array completo
-mergeByKey: se mergean objetos dentro del array por una clave interna
+preserveOrder: order matters
+sort: sort before comparing
+set: compare as a set without duplicates
+replace: replace the full array
+mergeByKey: merge array objects using an internal key
 ```
 
-### Campos calculados o runtime
+### Runtime Fields Should Be Ignored
 
-Campos como estos normalmente se ignoran:
+Fields like these are usually runtime state and should be ignored:
 
 ```txt
 createdAt
@@ -394,52 +612,62 @@ temporaryToken
 cache
 ```
 
-### Auditoria
+### Audit Log
 
-Cada ejecucion real debe guardar un log:
+Every real apply execution must create an audit record.
+
+The audit should include:
 
 ```txt
-fecha
-usuario o machine user
+date
+user or machine user
 source
 target
-plan aplicado
-cantidad de inserts
-cantidad de updates
-cantidad de deletes
-cantidad de indexes
-errores
+original plan checksum
+approved plan checksum
+source backup path or snapshot id
+target backup path or snapshot id
+insert count
+update count
+delete count
+index count
+attempted operations
+applied operations
+skipped operations
+errors
+rollback status
+restore status, if any
 ```
 
-Ese log puede guardarse en archivo y tambien en una collection del target:
+The audit log can be stored as a local file and also in a target collection:
 
 ```txt
-mongo_promote_runs
+mimic_runs
 ```
 
-## Modos de comparacion
+## Comparison Modes
 
-### Document-level diff
+### Document-Level Diff
 
-Compara documentos completos despues de normalizar campos ignorados.
+Compares full documents after normalizing ignored fields.
 
-Bueno para configuraciones chicas.
+Best for small configuration documents.
 
-### Field-level diff
+### Field-Level Diff
 
-Genera `$set` y `$unset` por campo.
+Generates `$set` and `$unset` operations by field.
 
-Bueno para evitar reemplazar documentos completos.
+Best for avoiding full document replacement.
 
-### Index diff
+### Index Diff
 
-Compara indexes esperados contra indexes existentes.
+Compares expected indexes from the config against existing target indexes.
 
-Debe crear indexes faltantes, pero no borrar indexes extra salvo configuracion explicita.
+The tool may create missing indexes, but it must not drop extra indexes unless explicitly configured.
 
-## Operaciones soportadas
+## Supported Operations
 
-Inicialmente:
+Initial scope:
 
 ```txt
 insertOne
@@ -448,7 +676,7 @@ updateOne with $unset
 createIndex
 ```
 
-Mas adelante:
+Future scope:
 
 ```txt
 deleteOne
@@ -459,26 +687,28 @@ map references
 merge arrays by key
 ```
 
-## Protecciones recomendadas
+## Recommended Protections
 
-- bloquear ejecucion si source y target apuntan a la misma URI;
-- pedir `--confirm=production` para aplicar en production;
-- mostrar conteos antes y despues;
-- soportar `--max-operations` para evitar cambios masivos accidentales;
-- soportar `--collections` para limitar una corrida;
-- fallar si una collection configurada no tiene clave estable;
-- fallar si hay claves duplicadas en source o target;
-- no imprimir secretos de conexion en logs;
-- guardar plan antes de aplicar;
-- aplicar operaciones de forma ordenada;
-- soportar rollback solamente cuando sea realmente posible.
+- block execution if source and target point to the same URI/database;
+- require `--confirm=production` for production writes;
+- show counts before and after apply;
+- support `--max-operations` to avoid accidental mass changes;
+- support `--collections` to limit a run;
+- fail if a configured collection has no stable key;
+- fail if source or target has duplicated stable keys;
+- never print database credentials in logs;
+- save and approve a plan before apply;
+- require backups before apply;
+- verify backup metadata before apply;
+- apply operations in a deterministic order;
+- refuse operations that cannot be rolled back or restored safely.
 
-## Estructura sugerida del proyecto Go
+## Suggested Go Project Structure
 
 ```txt
-mongo-promote/
+mimic/
   cmd/
-    mongo-promote/
+    mimic/
       main.go
   internal/
     cli/
@@ -486,6 +716,9 @@ mongo-promote/
       validate.go
       diff.go
       plan.go
+      review.go
+      approve.go
+      backup.go
       apply.go
       export.go
     config/
@@ -496,6 +729,9 @@ mongo-promote/
       connect.go
       collections.go
       indexes.go
+      backup.go
+      restore.go
+      transactions.go
     diff/
       normalize.go
       documents.go
@@ -504,39 +740,39 @@ mongo-promote/
     plan/
       operation.go
       build.go
+      approve.go
       read.go
       write.go
+      checksum.go
     apply/
       apply.go
+      rollback.go
       validators.go
     audit/
       audit.go
     exporters/
       mongodb_js.go
   examples/
-    mongo-promote.yml
+    mimic.yml
   go.mod
   go.sum
   README.md
 ```
 
-## Resultado final de la idea
+## Final Definition
 
-La idea queda como una CLI generica para MongoDB que permite comparar dos bases y promover cambios controlados desde una hacia otra.
+Mimic is a reusable Go CLI for comparing two MongoDB databases and promoting approved configurable data from one database to another.
 
-No reemplaza backups.
-No reemplaza migraciones estructurales versionadas.
-No debe tocar datos productivos sin reglas explicitas.
+It does not replace backups.
+It does not replace versioned structural migrations.
+It must not modify production data without explicit rules.
 
-Su rol ideal es:
+Its ideal role is:
 
 ```txt
-promover datos configurables y metadata entre ambientes MongoDB de forma segura, auditable y repetible.
+promote configurable data and metadata between MongoDB environments in a safe, auditable, repeatable way.
 ```
 
-Para cambios que dependen del codigo, conviene seguir usando migraciones versionadas.
+For code-dependent structural changes, use versioned migrations.
 
-Para cambios hechos desde un panel admin en staging, esta herramienta puede generar el diff, plan y apply hacia production.
-
-La implementacion elegida sera Go para que la herramienta quede desacoplada del lenguaje de cada backend y pueda distribuirse como binario reutilizable.
-
+For admin-made staging changes, use Mimic to generate a diff, create a proposed plan, review and approve selected operations, back up both databases, and apply the approved plan only when rollback or restore safety is available.

@@ -14,6 +14,9 @@ var commands = map[string]commandFunc{
 	"validate":      runValidate,
 	"diff":          runDiff,
 	"plan":          runPlan,
+	"review":        runReview,
+	"approve":       runApprove,
+	"backup":        runBackup,
 	"apply":         runApply,
 	"export-script": runExportScript,
 }
@@ -39,20 +42,23 @@ func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprintln(w, "mongo-promote compares configured MongoDB collections and builds safe promotion plans.")
+	fmt.Fprintln(w, "mimic compares configured MongoDB collections and builds safe promotion plans.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  mongo-promote validate --config=mongo-promote.yml")
-	fmt.Fprintln(w, "  mongo-promote diff --config=mongo-promote.yml")
-	fmt.Fprintln(w, "  mongo-promote plan --config=mongo-promote.yml --out=plans/plan.json")
-	fmt.Fprintln(w, "  mongo-promote apply --plan=plans/plan.json --confirm=production")
-	fmt.Fprintln(w, "  mongo-promote export-script --plan=plans/plan.json --format=mongodb-js")
+	fmt.Fprintln(w, "  mimic validate --config=mimic.yml")
+	fmt.Fprintln(w, "  mimic diff --config=mimic.yml")
+	fmt.Fprintln(w, "  mimic plan --config=mimic.yml --out=plans/plan.json")
+	fmt.Fprintln(w, "  mimic review --plan=plans/plan.json")
+	fmt.Fprintln(w, "  mimic approve --plan=plans/plan.json --out=plans/plan.approved.json")
+	fmt.Fprintln(w, "  mimic backup --config=mimic.yml --plan=plans/plan.approved.json --out=backups/run")
+	fmt.Fprintln(w, "  mimic apply --plan=plans/plan.approved.json --backup=backups/run --confirm=production")
+	fmt.Fprintln(w, "  mimic export-script --plan=plans/plan.approved.json --format=mongodb-js")
 }
 
 func configFlagSet(name string) (*flag.FlagSet, *string) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	configPath := fs.String("config", "mongo-promote.yml", "configuration file path")
+	configPath := fs.String("config", "mimic.yml", "configuration file path")
 	return fs, configPath
 }
 

@@ -1,9 +1,14 @@
 package plan
 
-func New(source string, target string) Plan {
+import "time"
+
+func New(source string, target string, configChecksum string) Plan {
 	return Plan{
-		Source:     source,
-		Target:     target,
-		Operations: []Operation{},
+		Kind:           "mimic.plan",
+		Source:         source,
+		Target:         target,
+		ConfigChecksum: configChecksum,
+		CreatedAt:      time.Now().UTC(),
+		Operations:     []Operation{},
 	}
 }
