@@ -1,0 +1,25 @@
+services:
+  mimic-source-mongo:
+    image: mongo:7
+    container_name: mimic-source-mongo
+    restart: unless-stopped
+    ports:
+      - "27018:27017"
+    volumes:
+      - mimic-source-data:/data/db
+      - ./testdata/mongo/source-init:/docker-entrypoint-initdb.d:ro
+
+  mimic-target-mongo:
+    image: mongo:7
+    container_name: mimic-target-mongo
+    restart: unless-stopped
+    ports:
+      - "27019:27017"
+    volumes:
+      - mimic-target-data:/data/db
+      - ./testdata/mongo/target-init:/docker-entrypoint-initdb.d:ro
+
+volumes:
+  mimic-source-data:
+  mimic-target-data:
+

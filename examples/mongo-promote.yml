@@ -1,0 +1,45 @@
+source:
+  uriEnv: STAGING_MONGO_URI
+
+target:
+  uriEnv: PRODUCTION_MONGO_URI
+
+defaults:
+  dryRun: true
+  allowDeletes: false
+  ignoreFields:
+    - _id
+    - __v
+    - createdAt
+    - updatedAt
+    - lastLogin
+    - runtimeStats
+
+collections:
+  settings:
+    key:
+      - key
+    mode: upsert
+    ignoreFields:
+      - lastModifiedBy
+
+  roles:
+    key:
+      - slug
+    mode: upsert
+
+indexes:
+  settings:
+    - keys:
+        key: 1
+      options:
+        unique: true
+        name: key_unique
+
+  roles:
+    - keys:
+        slug: 1
+      options:
+        unique: true
+        name: slug_unique
+
